@@ -34,16 +34,6 @@ class RandomAgent:
         gripper_pos = [np.random.rand() > 0.5]
         return delta_pos + delta_quat + gripper_pos
 
-class Agent:
-
-    def act(self, obs):
-        gripper_pose = obs.gripper_pose.tolist()
-        print(gripper_pose)
-        gripper_pose[0] -= 0.0005
-        gripper_pos = [0]
-        return gripper_pose + gripper_pos
-
-
 class NoisyObjectPoseSensor:
 
     def __init__(self, env):
@@ -73,12 +63,10 @@ class NoisyObjectPoseSensor:
 
 
 if __name__ == "__main__":
-    #action_mode = ActionMode(ArmActionMode.DELTA_EE_POSE) # See rlbench/action_modes.py for other action modes
-    action_mode = ActionMode(ArmActionMode.DELTA_EE_POSE_PLAN) # See rlbench/action_modes.py for other action modes
+    action_mode = ActionMode(ArmActionMode.DELTA_EE_POSE) # See rlbench/action_modes.py for other action modes
     env = Environment(action_mode, '', ObservationConfig(), False)
     task = env.get_task(PlayJenga) # available tasks: EmptyContainer, PlayJenga, PutGroceriesInCupboard, SetTheTable
     agent = RandomAgent()
-    #agent = Agent()
     obj_pose_sensor = NoisyObjectPoseSensor(env)
    
     descriptions, obs = task.reset()
