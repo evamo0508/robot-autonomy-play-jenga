@@ -32,14 +32,15 @@ class State(Enum):
     RESET = 1
     SEARCH_WPTPOKEOUT = 2
     SEARCH_WPTPOKEIN = 3
-    CLEAR = 5
-    SEARCH_WPTGRASPOUT = 6
+    CLEAR = 4
+    SEARCH_WPTGRASPOUT = 5
     SEARCH_WPTGRASPIN = 6
     GRASP = 7
     PULL = 8
     SEARCH_PLACEMENT = 9
     PLACE = 10
     ALIGN = 11
+    HOME = 12
 
 class Agent:
 
@@ -55,20 +56,21 @@ class Agent:
         self.wptGraspOut = np.zeros(7)
         self.wptGraspIn = np.zeros(7)
         self.visited = []
-        
+        self.home_goal = self.goal
 
     def act(self, obs, obj_poses):
         if self.state == State.RESET:
             self.reset()
         elif self.state == State.SEARCH_WPTPOKEOUT:
             self.search_wptPokeOut(obs, obj_poses)
-        """
         elif self.state == State.SEARCH_WPTPOKEIN:
             self.search_wptPokeIn(obs, obj_poses)
         elif self.state == State.CLEAR:
             self.clear(obs, obj_poses)
         elif self.state == State.SEARCH_WPTGRASPOUT:
             self.search_wptGraspOut(obs, obj_poses)
+        elif self.state == State.HOME:
+            self.home(obs)
         elif self.state == State.SEARCH_WPTGRASPIN:
             self.search_wptGraspIn(obs, obj_poses)
         elif self.state == State.GRASP:
@@ -77,8 +79,11 @@ class Agent:
             self.pull(obs, obj_poses)
         elif self.state == State.SEARCH_PLACEMENT:
             self.search_placement(obs, obj_poses)
-        """
-        
+        elif self.state == State.PLACE:
+            self.place()
+        elif self.state == State.ALIGN:
+            self.align()
+
         #self.state = self.state + 1 if self.state != State.ALIGN else self.RESET
         
         return self.goal + self.gripper
@@ -114,7 +119,7 @@ class Agent:
         # return delta_pos + delta_quat + gripper_pos
     def reset(self):
         self.gripper = [True]
-        
+         
         while True:
             cuboidID = np.random.choice(12)
             if cuboidID not in self.visited:
@@ -122,40 +127,34 @@ class Agent:
                 break
         
         if cuboidID == 10:
-            cuboid = 'Cuboid'
+            self.cuboid = 'Cuboid'
         elif cuboidID == 11:
-            cuboid = 'target_cuboid'
+            self.cuboid = 'target_cuboid'
         else:
-            cuboid = 'Cuboid' + str(cuboidID)
-        print("Cuboid: ", cuboid) 
-        quat = obj_poses[cuboid][3:7]
+            self.cuboid = 'Cuboid' + str(cuboidID)
+
+        # test
+        self.cuboid = 'target_cuboid'
+        print("Cuboid: ", self.cuboid) 
+        quat = obj_poses[self.cuboid][3:7]
         T = np.zeros((4,4))
         T[3, 3] = 1
-        T[:3, :3] = R.from_quat(quat).as_matrix().T
-        T[0, 3] = int(self.cuboidX / 2) + 0.01 # x
+        T[:3, :3] = R.from_quat(quat).as_matrix()
         
-        y90 = from_rotation_matrix(np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]]))
+        y90 = from_rotation_matrix(np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]]))
         
-        self.wptPokeOut[:3] = (T @ np.append(obj_poses[cuboid][:3], 1))[:3]
+        self.wptPokeOut[:3] = (T @ np.array([self.cuboidX, 0, 0, 0]).reshape((4,1)))[:3, 0] \
+                               + obj_poses[self.cuboid][:3]
         self.wptPokeOut[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
-        print(self.wptPokeOut)
 
-        T[0, 3] = int(self.cuboidX / 2) - 0.03 # x
-        self.wptPokeIn[:3] = (T @ np.append(obj_poses[cuboid][:3], 1))[:3]
+        self.wptPokeIn[:3] = (T @ np.array([self.cuboidX/2 - 0.08, 0, 0, 0]).reshape((4,1)))[:3, 0] \
+                               + obj_poses[self.cuboid][:3]
         self.wptPokeIn[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
-        
-        T[0, 3] = - int(self.cuboidX) * 0.025 # x
-        self.wptGraspOut[:3] = (T @ np.append(obj_poses[cuboid][:3], 1))[:3]
-        self.wptGraspOut[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
-        
-        T[0, 3] = - int(self.cuboidX / 2) - 0.015 # x
-        self.wptGraspIn[:3] = (T @ np.append(obj_poses[cuboid][:3], 1))[:3]
-        self.wptGraspIn[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
 
         self.state = State.SEARCH_WPTPOKEOUT
         
     def search_wptPokeOut(self, obs, obj_poses):
-        thresh = 0.05
+        thresh = 0.03
         # TODO: quaternion error
         if np.linalg.norm(obs.gripper_pose[:3] - self.wptPokeOut[:3]) > thresh:
         #if np.linalg.norm(obs.gripper_pose[:3] - obj_poses['waypoint2'][:3]) > thresh:
@@ -165,9 +164,10 @@ class Agent:
             self.state = State.SEARCH_WPTPOKEIN
 
     def search_wptPokeIn(self, obs, obj_poses):    
-        thresh = 0.05
+        thresh = 0.03
         # TODO: quaternion error
         if np.linalg.norm(obs.gripper_pose[:3] - self.wptPokeIn[:3]) > thresh:
+            self.gripper = [False]
             self.goal = self.wptPokeIn.tolist()
         else:
             self.state = State.CLEAR
@@ -178,23 +178,25 @@ class Agent:
         if np.linalg.norm(obs.gripper_pose[:3] - self.wptPokeOut[:3]) > thresh:
             self.goal = self.wptPokeOut.tolist()
         else:
-            self.state = State.SEARCH_wptGraspOut
+            self.state = State.HOME
     
     def search_wptGraspOut(self, obs, obj_poses):
         thresh = 0.05
         # TODO: quaternion error
         if np.linalg.norm(obs.gripper_pose[:3] - self.wptGraspOut[:3]) > thresh:
+            self.gripper = [True]
             self.goal = self.wptGraspOut.tolist()
         else:
-            self.state = State.SEARCH_wptGraspIn
+            self.state = State.SEARCH_WPTGRASPIN
         
-    def search_wptGraspOut(self, obs, obj_poses):
+        
+    def search_wptGraspIn(self, obs, obj_poses):
         thresh = 0.05
         # TODO: quaternion error
-        if np.linalg.norm(obs.gripper_pose[:3] - self.wptGraspOut[:3]) > thresh:
-            self.goal = self.wptGraspOut.tolist()
+        if np.linalg.norm(obs.gripper_pose[:3] - self.wptGraspIn[:3]) > thresh:
+            self.goal = self.wptGraspIn.tolist()
         else:
-            self.state = State.SEARCH_wptGraspIn
+            self.state = State.GRASP
 
     def grasp(self):
         self.gripper = [False]
@@ -209,7 +211,48 @@ class Agent:
             self.state = State.SEARCH_PLACEMENT
 
     def search_placement(self, obs, obj_poses):
+        maxHeight = [pose[2] for (i, pose) in obj_poses.items()]
+        xs = [pose[0] for (i, pose) in obj_poses.items()]
+        ys = [pose[1] for (i, pose) in obj_poses.items()]
+        h = np.mean(maxHeight.sort()[-3:]) + self.cuboidZ / 2
+        x = np.mean(xs)
+        y = np.mean(ys)
+        thresh = 0.05
+        # TODO: quaternion error
+        goal = [x, y, h] + self.wptGraspOut[3:7]
+        if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh:
+            self.goal = goal
+        else:
+            self.state = State.PLACE
+
+    def place(self):
+        self.gripper = [True]
+        self.state = State.ALIGN
+        
+    def align(self):
         pass
+
+    def home(self, obs):
+        thresh = 0.05
+        # TODO: quaternion error
+        if np.linalg.norm(obs.gripper_pose[:3] - np.array(self.home_goal[:3])) > thresh:
+            self.goal = self.home_goal
+            self.goal[2] -= 0.3
+        else:
+            self.state = State.SEARCH_WPTGRASPOUT
+            quat = obj_poses[self.cuboid][3:7]
+            T = np.zeros((4,4))
+            T[3, 3] = 1
+            T[:3, :3] = R.from_quat(quat).as_matrix()
+            z180 = from_rotation_matrix(np.array([[-1, 0, 0], [0, -1, 0], [0, 0, 1]]))
+            self.wptGraspOut[:3] = (T @ np.array([-self.cuboidX * 1.6, 0, 0, 0]).reshape((4,1)))[:3, 0] \
+                               + obj_poses[self.cuboid][:3]
+            self.wptGraspOut[3:7] = as_float_array(z180 * quaternion(quat[0], quat[1], quat[2], quat[3]))
+        
+            self.wptGraspIn[:3] = (T @ np.array([-self.cuboidX/2 + 0.03, 0, 0, 0]).reshape((4,1)))[:3, 0] \
+                               + obj_poses[self.cuboid][:3]
+            self.wptGraspIn[3:7] = as_float_array(z180 * quaternion(quat[0], quat[1], quat[2], quat[3]))
+        
         
             
 class NoisyObjectPoseSensor:
