@@ -1,11 +1,14 @@
 import numpy as np
 import scipy as sp
-from quaternion import from_rotation_matrix, quaternion
+from scipy.spatial.transform import Rotation as R
+from quaternion import from_rotation_matrix, quaternion, as_float_array
 
 from rlbench.environment import Environment
 from rlbench.action_modes import ArmActionMode, ActionMode
 from rlbench.observation_config import ObservationConfig
 from rlbench.tasks import *
+
+from enum import Enum 
 
 def skew(x):
     return np.array([[0, -x[2], x[1]],
@@ -25,39 +28,60 @@ def sample_normal_pose(pos_scale, rot_scale):
 
     return pos, quat_wxyz
 
+class State(Enum):
+    RESET = 1
+    SEARCH_WPTPOKEOUT = 2
+    SEARCH_WPTPOKEIN = 3
+    CLEAR = 5
+    SEARCH_WPTGRASPOUT = 6
+    SEARCH_WPTGRASPIN = 6
+    GRASP = 7
+    PULL = 8
+    SEARCH_PLACEMENT = 9
+    PLACE = 10
+    ALIGN = 11
 
-class RandomAgent:
+class Agent:
 
-    # def act(self, obs):
-    #     delta_pos = [(np.random.rand() * 2 - 1) * 0.005, 0, 0]
-    #     delta_quat = [0, 0, 0, 1] # xyzw
-    #     gripper_pos = [np.random.rand() > 0.5]
-    #     return delta_pos + delta_quat + gripper_pos
+    def __init__(self, obs, obj_poses):
+        self.state = State.RESET
+        self.goal = obs.gripper_pose.tolist() # x, y , z, quaternion
+        self.gripper = [True]
+        self.cuboidX = 0.2067
+        self.cuboidY = 0.069
+        self.cuboidZ = 0.0333
+        self.wptPokeOut = obj_poses['waypoint2']
+        self.wptPokeIn =  obj_poses['waypoint1']
+        self.wptGraspOut = np.zeros(7)
+        self.wptGraspIn = np.zeros(7)
+        self.visited = []
+        
 
-    def act(self, obs, obj_poses,visited):
-        #move to waypoint2, then move to waypoint0. visited declared in main
-        thresh = 0.05
-        gripper_pos = [True]
-        waypoint2 = obj_poses['waypoint2'].tolist()
-        waypoint1 = obj_poses['waypoint1'].tolist()
-        gripper = obs.gripper_pose.tolist()
-        print(np.linalg.norm(obs.gripper_pose[:3]-obj_poses['waypoint2'][:3]))
-        if visited[0] == False:
-            if np.linalg.norm(obs.gripper_pose[:3]-obj_poses['waypoint2'][:3]) > thresh:
-                return waypoint2 + gripper_pos, visited
-            if np.linalg.norm(obs.gripper_pose[:3]-obj_poses['waypoint2'][:3]) <= thresh:
-                visited[0] = True
-        if visited[0] == True and visited[1] == False:
-            if np.linalg.norm(obs.gripper_pose[:3]-obj_poses['waypoint1'][:3]) > thresh:
-                return waypoint1 + gripper_pos, visited
-            if np.linalg.norm(obs.gripper_pose[:3]-obj_poses['waypoint1'][:3]) <= thresh:
-                visited[1] = True
-        if visited[1] == True:
-            gripper_pos = [False]
-        if gripper_pos == [False]:
-            gripper_pos = [False]
-            return waypoint2 + gripper_pos, visited
-        return gripper + gripper_pos, visited
+    def act(self, obs, obj_poses):
+        if self.state == State.RESET:
+            self.reset()
+        elif self.state == State.SEARCH_WPTPOKEOUT:
+            self.search_wptPokeOut(obs, obj_poses)
+        """
+        elif self.state == State.SEARCH_WPTPOKEIN:
+            self.search_wptPokeIn(obs, obj_poses)
+        elif self.state == State.CLEAR:
+            self.clear(obs, obj_poses)
+        elif self.state == State.SEARCH_WPTGRASPOUT:
+            self.search_wptGraspOut(obs, obj_poses)
+        elif self.state == State.SEARCH_WPTGRASPIN:
+            self.search_wptGraspIn(obs, obj_poses)
+        elif self.state == State.GRASP:
+            self.grasp()
+        elif self.state == State.PULL:
+            self.pull(obs, obj_poses)
+        elif self.state == State.SEARCH_PLACEMENT:
+            self.search_placement(obs, obj_poses)
+        """
+        
+        #self.state = self.state + 1 if self.state != State.ALIGN else self.RESET
+        
+        return self.goal + self.gripper
 
         # # print("Cuboid1\n",obj_poses['Cuboid1'])
         # # print ("obs gripper pose\n", obs.gripper_pose)
@@ -88,8 +112,106 @@ class RandomAgent:
 
         
         # return delta_pos + delta_quat + gripper_pos
+    def reset(self):
+        self.gripper = [True]
+        
+        while True:
+            cuboidID = np.random.choice(12)
+            if cuboidID not in self.visited:
+                self.visited.append(cuboidID)
+                break
+        
+        if cuboidID == 10:
+            cuboid = 'Cuboid'
+        elif cuboidID == 11:
+            cuboid = 'target_cuboid'
+        else:
+            cuboid = 'Cuboid' + str(cuboidID)
+        print("Cuboid: ", cuboid) 
+        quat = obj_poses[cuboid][3:7]
+        T = np.zeros((4,4))
+        T[3, 3] = 1
+        T[:3, :3] = R.from_quat(quat).as_matrix().T
+        T[0, 3] = int(self.cuboidX / 2) + 0.01 # x
+        
+        y90 = from_rotation_matrix(np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]]))
+        
+        self.wptPokeOut[:3] = (T @ np.append(obj_poses[cuboid][:3], 1))[:3]
+        self.wptPokeOut[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
+        print(self.wptPokeOut)
 
+        T[0, 3] = int(self.cuboidX / 2) - 0.03 # x
+        self.wptPokeIn[:3] = (T @ np.append(obj_poses[cuboid][:3], 1))[:3]
+        self.wptPokeIn[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
+        
+        T[0, 3] = - int(self.cuboidX) * 0.025 # x
+        self.wptGraspOut[:3] = (T @ np.append(obj_poses[cuboid][:3], 1))[:3]
+        self.wptGraspOut[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
+        
+        T[0, 3] = - int(self.cuboidX / 2) - 0.015 # x
+        self.wptGraspIn[:3] = (T @ np.append(obj_poses[cuboid][:3], 1))[:3]
+        self.wptGraspIn[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
 
+        self.state = State.SEARCH_WPTPOKEOUT
+        
+    def search_wptPokeOut(self, obs, obj_poses):
+        thresh = 0.05
+        # TODO: quaternion error
+        if np.linalg.norm(obs.gripper_pose[:3] - self.wptPokeOut[:3]) > thresh:
+        #if np.linalg.norm(obs.gripper_pose[:3] - obj_poses['waypoint2'][:3]) > thresh:
+            self.goal = self.wptPokeOut.tolist()
+            #self.goal = obj_poses['waypoint2'].tolist()
+        else:
+            self.state = State.SEARCH_WPTPOKEIN
+
+    def search_wptPokeIn(self, obs, obj_poses):    
+        thresh = 0.05
+        # TODO: quaternion error
+        if np.linalg.norm(obs.gripper_pose[:3] - self.wptPokeIn[:3]) > thresh:
+            self.goal = self.wptPokeIn.tolist()
+        else:
+            self.state = State.CLEAR
+    
+    def clear(self, obs, obj_poses):
+        thresh = 0.05
+        # TODO: quaternion error
+        if np.linalg.norm(obs.gripper_pose[:3] - self.wptPokeOut[:3]) > thresh:
+            self.goal = self.wptPokeOut.tolist()
+        else:
+            self.state = State.SEARCH_wptGraspOut
+    
+    def search_wptGraspOut(self, obs, obj_poses):
+        thresh = 0.05
+        # TODO: quaternion error
+        if np.linalg.norm(obs.gripper_pose[:3] - self.wptGraspOut[:3]) > thresh:
+            self.goal = self.wptGraspOut.tolist()
+        else:
+            self.state = State.SEARCH_wptGraspIn
+        
+    def search_wptGraspOut(self, obs, obj_poses):
+        thresh = 0.05
+        # TODO: quaternion error
+        if np.linalg.norm(obs.gripper_pose[:3] - self.wptGraspOut[:3]) > thresh:
+            self.goal = self.wptGraspOut.tolist()
+        else:
+            self.state = State.SEARCH_wptGraspIn
+
+    def grasp(self):
+        self.gripper = [False]
+        self.state = State.PULL
+    
+    def pull(self, obs, obj_poses):
+        thresh = 0.05
+        # TODO: quaternion error
+        if np.linalg.norm(obs.gripper_pose[:3] - self.wptGraspOut[:3]) > thresh:
+            self.goal = self.wptGraspOut.tolist()
+        else:
+            self.state = State.SEARCH_PLACEMENT
+
+    def search_placement(self, obs, obj_poses):
+        pass
+        
+            
 class NoisyObjectPoseSensor:
 
     def __init__(self, env):
@@ -118,6 +240,8 @@ class NoisyObjectPoseSensor:
         return obj_poses
 
 
+
+
 if __name__ == "__main__":
     # action_mode = ActionMode(ArmActionMode.DELTA_EE_POSE) # See rlbench/action_modes.py for other action modes
     # action_mode = ActionMode(ArmActionMode.DELTA_EE_POSE_PLAN)
@@ -126,13 +250,11 @@ if __name__ == "__main__":
     # task = env.get_task(StackBlocks) # available tasks: EmptyContainer, PlayJenga, PutGroceriesInCupboard, SetTheTable
     task = env.get_task(PlayJenga) # available tasks: EmptyContainer, PlayJenga, PutGroceriesInCupboard, SetTheTable
 
-    agent = RandomAgent()
     obj_pose_sensor = NoisyObjectPoseSensor(env)
-   
     descriptions, obs = task.reset()
+    agent = Agent(obs, obj_pose_sensor.get_poses())
     
     
-    visited = [False, False,False]
     while True:
         # Getting noisy object poses
         obj_poses = obj_pose_sensor.get_poses()
@@ -148,8 +270,7 @@ if __name__ == "__main__":
         # Perform action and step simulation
         # action = agent.act(obs)
 
-        print("visited",visited)
-        action,visited = agent.act(obs,obj_poses,visited)
+        action = agent.act(obs, obj_poses)
         obs, reward, terminate = task.step(action)
         
 
