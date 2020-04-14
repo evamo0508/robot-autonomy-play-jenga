@@ -214,6 +214,7 @@ class Agent:
         maxHeight = [pose[2] for (i, pose) in obj_poses.items()]
         xs = [pose[0] for (i, pose) in obj_poses.items()]
         ys = [pose[1] for (i, pose) in obj_poses.items()]
+        print(maxHeight.sort())
         h = np.mean(maxHeight.sort()[-3:]) + self.cuboidZ / 2
         x = np.mean(xs)
         y = np.mean(ys)
@@ -244,7 +245,7 @@ class Agent:
             T = np.zeros((4,4))
             T[3, 3] = 1
             T[:3, :3] = R.from_quat(quat).as_matrix()
-            z180 = from_rotation_matrix(np.array([[-1, 0, 0], [0, -1, 0], [0, 0, 1]]))
+            z180 = from_rotation_matrix(np.array([[-0.99,-0.01, 0], [0.01, -0.99, 0], [0, 0, 1]]))
             self.wptGraspOut[:3] = (T @ np.array([-self.cuboidX * 1.6, 0, 0, 0]).reshape((4,1)))[:3, 0] \
                                + obj_poses[self.cuboid][:3]
             self.wptGraspOut[3:7] = as_float_array(z180 * quaternion(quat[0], quat[1], quat[2], quat[3]))
