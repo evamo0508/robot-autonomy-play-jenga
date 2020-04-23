@@ -59,12 +59,16 @@ class Agent:
         self.wptGraspOut = np.zeros(7)
         self.wptGraspIn = np.zeros(7)
         self.wptPull = []
+        self.wptAlignout = []
         self.visited = []
         self.home_goal = self.goal
         self.placePose = []
+        self.rdx = 0
 
+        
     def act(self, obs, obj_poses):
         print(self.state)
+
         if self.state == State.RESET:
             self.reset()
         elif self.state == State.SEARCH_WPTPOKEOUT:
@@ -145,8 +149,9 @@ class Agent:
             self.cuboid = 'Cuboid' + str(cuboidID)
 
         # test
-        self.cuboid = 'target_cuboid'
-        # self.cuboid = 'Cuboid6'
+        # self.cuboid = 'target_cuboid'
+        self.cuboid = 'Cuboid3'
+        obj_poses['target_cuboid'] = obj_poses['Cuboid3']
         print("Cuboid: ", self.cuboid) 
 
         if self.cuboid == "target_cuboid":
@@ -200,7 +205,7 @@ class Agent:
     def home(self, obs):
         thresh = 0.05
         clearance = 0.3     #distance above top of block to home
-        self.grasp_amount = 0.016  #grasp more into the block when value is large
+        self.grasp_amount = 0.018  #grasp more into the block when value is large
         # TODO: quaternion error
         if np.linalg.norm(obs.gripper_pose[:3] - np.array(self.home_goal[:3])) > thresh:
             # self.goal = self.home_goal
@@ -315,6 +320,15 @@ class Agent:
 
     def place(self):
         self.gripper = [True]
+        thresh = 0.05
+        self.rdx = 0.1  # the dist that the gripper move out 
+        rdz = 0.03
+        # dx,dy,dz = (T @ np.array([-self.cuboidX+self.grasp_amount, 0, 0, 0]).reshape((4,1)))[:3, 0])
+        dx,dy,dz = self.transform(obs.gripper_pose, - self.rdx,0, rdz)
+        self.wptAlignout = self.placePose + self.wptGraspOut[3:7].tolist()
+        self.wptAlignout[0] += dx
+        self.wptAlignout[1] += dy
+        self.wptAlignout[2] += dz
         self.state = State.ALIGN_OUT
     
     def rotation_matrix(self,axis,angle):
@@ -336,32 +350,43 @@ class Agent:
         return w_dx,w_dy,w_dz
 
     def align_out(self):
-        thresh = 0.05
-        rdx = -self.grasp_amount-0.2
+        thresh = 0.03
+        # rdx = -self.grasp_amount-0.2
         # dx,dy,dz = (T @ np.array([-self.cuboidX+self.grasp_amount, 0, 0, 0]).reshape((4,1)))[:3, 0])
-        dx,dy,dz = self.transform(obs.gripper_pose, rdx,0, 0)
-        goal = self.placePose + self.wptGraspOut[3:7].tolist()
-        goal[0] += dx
-        goal[1] += dy
-        goal[2] += dz
+        # dx,dy,dz = self.transform(obs.gripper_pose, rdx,0, 0)
+        # goal = self.placePose + self.wptGraspOut[3:7].tolist()
+        # goal[0] += dx
+        # goal[1] += dy
+        # goal[2] += dz
+        goal = self.wptAlignout
         if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh:
             self.goal = goal
         else:
+            # rdx = (self.cuboidX / 2) - (self.grasp_amount + self.rdx)
+            rdx = self.rdx + 0.01
+            dx,dy,dz = self.transform(obs.gripper_pose, rdx,0, 0)
+            self.wptAlignout = self.placePose + self.wptGraspOut[3:7].tolist()
+            self.wptAlignout[0] += dx
+            self.wptAlignout[1] += dy
+            self.wptAlignout[2] += dz
+
             self.state = State.ALIGN_IN
             
     def align_in(self):
         self.gripper = [False]
         thresh = 0.05
+        goal = self.wptAlignout
         #adjust later push more
-        rdx = self.grasp_amount*2+0.2+self.cuboidX/2
-        rdz = -0.05
-        dx,dy,dz = self.transform(obs.gripper_pose, rdx,0, rdz)
-        goal = self.placePose + self.wptGraspOut[3:7].tolist()
-        if np.linalg.norm(obs.gripper_pose[:3] - (self.placePose[:3])) > thresh:
-            self.goal = self.placePose + self.wptGraspOut[3:7].tolist()
-            goal[0] += dx
-            goal[1] += dy
-            goal[2] += dz
+        # rdx = self.grasp_amount*2+0.2+self.cuboidX/2
+        # rdz = -0.05
+        # dx,dy,dz = self.transform(obs.gripper_pose, rdx,0, rdz)
+        # goal = self.placePose + self.wptGraspOut[3:7].tolist()
+        if np.linalg.norm(obs.gripper_pose[:3] - (goal[:3])) > thresh:
+            # self.goal = self.placePose + self.wptGraspOut[3:7].tolist()
+            # goal[0] += dx
+            # goal[1] += dy
+            # goal[2] += dz
+            self.goal = goal
         else:
             self.state = State.MOVE_UP2
 
@@ -373,8 +398,9 @@ class Agent:
             self.goal[2] = self.placePose[2] + up_amount
         else:
             self.state = State.RESET
+           
 
-            
+    # def moving_avg(self, )
 class NoisyObjectPoseSensor:
 
     def __init__(self, env):
@@ -408,11 +434,12 @@ class NoisyObjectPoseSensor:
 if __name__ == "__main__":
     # action_mode = ActionMode(ArmActionMode.DELTA_EE_POSE) # See rlbench/action_modes.py for other action modes
     # action_mode = ActionMode(ArmActionMode.DELTA_EE_POSE_PLAN)
+    print('Start~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~```')
     action_mode = ActionMode(ArmActionMode.ABS_EE_POSE_PLAN)
-    env = Environment(action_mode, '', ObservationConfig(), False, frequency=5)
+    env = Environment(action_mode, '', ObservationConfig(), False, frequency=5, static_positions=True)
     # task = env.get_task(StackBlocks) # available tasks: EmptyContainer, PlayJenga, PutGroceriesInCupboard, SetTheTable
     task = env.get_task(PlayJenga) # available tasks: EmptyContainer, PlayJenga, PutGroceriesInCupboard, SetTheTable
-
+    print('Finish env init~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``')
     obj_pose_sensor = NoisyObjectPoseSensor(env)
     descriptions, obs = task.reset()
     agent = Agent(obs, obj_pose_sensor.get_poses())
@@ -422,6 +449,13 @@ if __name__ == "__main__":
         # Getting noisy object poses
         obj_poses = obj_pose_sensor.get_poses()
 
+        for _ in range (9):
+            for key, item in obj_pose_sensor.get_poses().items():
+                obj_poses[key][:3] = [sum(i) for i in zip(obj_poses[key][:3], item[:3])] 
+                # print(obj_poses)
+        for key, item in obj_poses.items():
+            obj_poses[key][:3] = [i / 10 for i in item[:3]] 
+        
 
         # Getting various fields from obs
         current_joints = obs.joint_positions
