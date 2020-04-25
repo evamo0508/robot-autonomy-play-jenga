@@ -7,6 +7,7 @@ from rlbench.environment import Environment
 from rlbench.action_modes import ArmActionMode, ActionMode
 from rlbench.observation_config import ObservationConfig
 from rlbench.tasks import *
+from pyrep.objects.shape import Shape
 
 from enum import Enum 
 
@@ -47,7 +48,7 @@ class State(Enum):
 
 class Agent:
 
-    def __init__(self, obs, obj_poses):
+    def __init__(self, obs, obj_poses, task):
         self.state = State.RESET
         self.goal = obs.gripper_pose.tolist() # x, y , z, quaternion
         self.gripper = [True]
@@ -64,6 +65,7 @@ class Agent:
         self.home_goal = self.goal
         self.placePose = []
         self.rdx = 0
+        self._jenga = task
 
         
     def act(self, obs, obj_poses):
@@ -153,6 +155,8 @@ class Agent:
         self.cuboid = 'Cuboid3'
         obj_poses['target_cuboid'] = obj_poses['Cuboid3']
         print("Cuboid: ", self.cuboid) 
+
+        self._jenga._task.register_graspable_objects([Shape(self.cuboid)])
 
         if self.cuboid == "target_cuboid":
             poke_amount = 0.065      #increase means poke more into the block
@@ -442,7 +446,7 @@ if __name__ == "__main__":
     print('Finish env init~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``')
     obj_pose_sensor = NoisyObjectPoseSensor(env)
     descriptions, obs = task.reset()
-    agent = Agent(obs, obj_pose_sensor.get_poses())
+    agent = Agent(obs, obj_pose_sensor.get_poses(),task)
     
     
     while True:
