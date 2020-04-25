@@ -160,6 +160,7 @@ class Agent:
         obj_poses['target_cuboid'] = obj_poses['Cuboid3']
         print("Cuboid: ", self.cuboid) 
 
+
         if self.cuboid == "target_cuboid":
             poke_amount = 0.065      #increase means poke more into the block
         else:
@@ -443,10 +444,13 @@ if __name__ == "__main__":
     print('Start~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~```')
     action_mode = ActionMode(ArmActionMode.ABS_EE_POSE_PLAN)
     #env = Environment(action_mode, '', ObservationConfig(), False, frequency=5, static_positions=True)
-    env = gym.make('reach_target-vision-v0')
-    task = env.get_task(PlayJenga) # available tasks: EmptyContainer, PlayJenga, PutGroceriesInCupboard, SetTheTable
+    env = gym.make('play_jenga-state-v0')
+    task = env.task
+    # task = env.get_task(PlayJenga) # available tasks: EmptyContainer, PlayJenga, PutGroceriesInCupboard, SetTheTable
+    
     print('Finish env init~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``')
-    obj_pose_sensor = NoisyObjectPoseSensor(env)
+    obj_pose_sensor = NoisyObjectPoseSensor(env.env)
+    # obj_pose_sensor = NoisyObjectPoseSensor(env)
     descriptions, obs = task.reset()
     agent = Agent(obs, obj_pose_sensor.get_poses())
     
@@ -455,7 +459,9 @@ if __name__ == "__main__":
     EnvType = 'rlbench'
     
     alg_params, learn_params = call_default_params(env, EnvType, AlgName)
-    alg = PPO(method='clip', **alg_params) # specify 'clip' or 'penalty' method for PPO
+    # alg = PPO(method='clip', **alg_params) # specify 'clip' or 'penalty' method for PPO
+    alg_params['method'] = 'clip'
+    alg = eval(AlgName+'(**alg_params)')
     training_steps = 120
     iterations = 10
 
@@ -490,12 +496,14 @@ if __name__ == "__main__":
 
             # if terminate:
             #     break
-        """
+
         # mess
+        """
 
         # reset using RL
-        alg.learn(env=env, train_episodes=3, max_steps=training_steps, save_interval=40, mode='train', render=True, **learn_params)
-        
+        # alg.learn(env=env, train_episodes=3, max_steps=training_steps, save_interval=40, mode='train', render=True, **learn_params)
+        alg.learn(env=env, mode='train', **learn_params)
+
         
         """
         for i in range(training_steps):
