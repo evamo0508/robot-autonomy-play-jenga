@@ -8,6 +8,12 @@ from rlbench.action_modes import ArmActionMode, ActionMode
 from rlbench.observation_config import ObservationConfig
 from rlbench.tasks import *
 
+import gym
+import rlbench.gym
+from rlzoo.common.env_wrappers import *
+from rlzoo.common.utils import *
+from rlzoo.algorithms import *
+
 from enum import Enum 
 
 def skew(x):
@@ -436,42 +442,78 @@ if __name__ == "__main__":
     # action_mode = ActionMode(ArmActionMode.DELTA_EE_POSE_PLAN)
     print('Start~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~```')
     action_mode = ActionMode(ArmActionMode.ABS_EE_POSE_PLAN)
-    env = Environment(action_mode, '', ObservationConfig(), False, frequency=5, static_positions=True)
-    # task = env.get_task(StackBlocks) # available tasks: EmptyContainer, PlayJenga, PutGroceriesInCupboard, SetTheTable
+    #env = Environment(action_mode, '', ObservationConfig(), False, frequency=5, static_positions=True)
+    env = gym.make('reach_target-vision-v0')
     task = env.get_task(PlayJenga) # available tasks: EmptyContainer, PlayJenga, PutGroceriesInCupboard, SetTheTable
     print('Finish env init~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``')
     obj_pose_sensor = NoisyObjectPoseSensor(env)
     descriptions, obs = task.reset()
     agent = Agent(obs, obj_pose_sensor.get_poses())
     
+    AlgName = 'PPO'
+    EnvName = 'ReachTarget'
+    EnvType = 'rlbench'
     
-    while True:
-        # Getting noisy object poses
-        obj_poses = obj_pose_sensor.get_poses()
+    alg_params, learn_params = call_default_params(env, EnvType, AlgName)
+    alg = PPO(method='clip', **alg_params) # specify 'clip' or 'penalty' method for PPO
+    training_steps = 120
+    iterations = 10
 
-        for _ in range (9):
-            for key, item in obj_pose_sensor.get_poses().items():
-                obj_poses[key][:3] = [sum(i) for i in zip(obj_poses[key][:3], item[:3])] 
-                # print(obj_poses)
-        for key, item in obj_poses.items():
-            obj_poses[key][:3] = [i / 10 for i in item[:3]] 
+    for it in range(iterations):
+        # forward
+        """
+        while True:
+            # Getting noisy object poses
+            obj_poses = obj_pose_sensor.get_poses()
+
+            for _ in range (9):
+                for key, item in obj_pose_sensor.get_poses().items():
+                    obj_poses[key][:3] = [sum(i) for i in zip(obj_poses[key][:3], item[:3])] 
+                    # print(obj_poses)
+            for key, item in obj_poses.items():
+                obj_poses[key][:3] = [i / 10 for i in item[:3]] 
+            
+
+            # Getting various fields from obs
+            current_joints = obs.joint_positions
+            gripper_pose = obs.gripper_pose
+            rgb = obs.wrist_rgb
+            depth = obs.wrist_depth
+            mask = obs.wrist_mask
+
+            # Perform action and step simulation
+            # action = agent.act(obs)
+
+            action = agent.act(obs, obj_poses)
+            obs, reward, terminate = task.step(action)
+            
+
+            # if terminate:
+            #     break
+        """
+        # mess
+
+        # reset using RL
+        alg.learn(env=env, train_episodes=3, max_steps=training_steps, save_interval=40, mode='train', render=True, **learn_params)
         
-
-        # Getting various fields from obs
-        current_joints = obs.joint_positions
-        gripper_pose = obs.gripper_pose
-        rgb = obs.wrist_rgb
-        depth = obs.wrist_depth
-        mask = obs.wrist_mask
-
-        # Perform action and step simulation
-        # action = agent.act(obs)
-
-        action = agent.act(obs, obj_poses)
-        obs, reward, terminate = task.step(action)
         
+        """
+        for i in range(training_steps):
+            if i % episode_length == 0:
+                print('Reset Episode')
+                obs = env.reset()
+            # need to assign action with the learned policy here
+            # action = 
+            obs, reward, terminate, _ = env.step(env.action_space.sample())
+            #env.render()
+            
+            if terminate:
+                break
+        """
 
-        # if terminate:
-        #     break
+    print('Done')
+    env.close()
+    #env.shutdown()
 
-    env.shutdown()
+    # to test:
+    # alg.leran(env=env, mode='test', render=True, **learn_params)
