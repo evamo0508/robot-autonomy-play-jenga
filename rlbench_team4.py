@@ -109,7 +109,12 @@ class Agent:
             self.move_up2(obs, obj_poses)    
 
         #self.state = self.state + 1 if self.state != State.ALIGN else self.RESET
-        
+        xmin,xmax = 0, 0.45
+        ymin,ymax = -0.45, 0.4
+        zmin,zmax = 0.5,1.7
+
+        if self.goal[0] < xmin or self.goal[0] > xmax or self.goal[1] < ymin or self.goal[1] > ymax or self.goal[2] < zmin or self.goal[2]> zmax:
+            print("OUT OF BOUNDS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!") 
         return self.goal + self.gripper
 
         # # print("Cuboid1\n",obj_poses['Cuboid1'])
@@ -158,9 +163,9 @@ class Agent:
 
         # test
         # self.cuboid = 'target_cuboid'
-        self.cuboid = 'Cuboid3'
-        obj_poses['target_cuboid'] = obj_poses['Cuboid3']
-        print("Cuboid: ", self.cuboid) 
+        # self.cuboid = 'Cuboid5'
+        # self.cuboid = 'Cuboid3'
+        print("Cuboid: ", self.cuboid)
 
         self._jenga._task.register_graspable_objects([Shape(self.cuboid)])
 
@@ -175,7 +180,7 @@ class Agent:
         
         y90 = from_rotation_matrix(np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]]))
         
-        self.wptPokeOut[:3] = (T @ np.array([self.cuboidX, 0, 0, 0]).reshape((4,1)))[:3, 0] \
+        self.wptPokeOut[:3] = (T @ np.array([self.cuboidX/2+0.05, 0, 0, 0]).reshape((4,1)))[:3, 0] \
                                + obj_poses[self.cuboid][:3]
         self.wptPokeOut[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
 
@@ -449,6 +454,10 @@ if __name__ == "__main__":
     #env = Environment(action_mode, '', ObservationConfig(), False, frequency=5, static_positions=True)
     env = gym.make('play_jenga-state-v0')
     task = env.task
+    # print(type(env))
+    # print(type(task))
+    # print(type(task._task))
+    
     # task = env.get_task(PlayJenga) # available tasks: EmptyContainer, PlayJenga, PutGroceriesInCupboard, SetTheTable
     
     print('Finish env init~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~``')
@@ -468,19 +477,21 @@ if __name__ == "__main__":
     training_steps = 120
     iterations = 10
 
+
+    mov_avg = 50
     for it in range(iterations):
         # forward
-        """
+        
         while True:
             # Getting noisy object poses
             obj_poses = obj_pose_sensor.get_poses()
 
-            for _ in range (9):
+            for _ in range (mov_avg-1):
                 for key, item in obj_pose_sensor.get_poses().items():
                     obj_poses[key][:3] = [sum(i) for i in zip(obj_poses[key][:3], item[:3])] 
                     # print(obj_poses)
             for key, item in obj_poses.items():
-                obj_poses[key][:3] = [i / 10 for i in item[:3]] 
+                obj_poses[key][:3] = [i / mov_avg for i in item[:3]] 
             
 
             # Getting various fields from obs
@@ -499,13 +510,14 @@ if __name__ == "__main__":
 
             # if terminate:
             #     break
-
+       
+        
         # mess
-        """
+        
 
         # reset using RL
         # alg.learn(env=env, train_episodes=3, max_steps=training_steps, save_interval=40, mode='train', render=True, **learn_params)
-        alg.learn(env=env, mode='train', **learn_params)
+        # alg.learn(env=env, mode='train', **learn_params)
 
         
         """
@@ -527,4 +539,4 @@ if __name__ == "__main__":
     #env.shutdown()
 
     # to test:
-    # alg.leran(env=env, mode='test', render=True, **learn_params)
+    # alg.learn(env=env, mode='test', render=True, **learn_params)
