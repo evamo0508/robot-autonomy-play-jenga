@@ -16,6 +16,7 @@ from rlzoo.common.utils import *
 from rlzoo.algorithms import *
 
 from enum import Enum 
+import time
 
 def skew(x):
     return np.array([[0, -x[2], x[1]],
@@ -70,9 +71,20 @@ class Agent:
         self.visited = []
         self.home_goal = self.goal
         self.placePose = []
-        self.rdx = 0
         self._jenga = task
+        self.poke_out = 0.09 # the more, the farther away from block before poking
+        self.place_amount = 0.06
+        self.grasp_amount = 0.018  #grasp more into the block when value is large
+        self.align_out_amount = -0.05  # the dist that the gripper move out before aligning. The more negative, the more it moves out
+        self.align_in_amount = 0.08     #increases this pushes in more
+        self.up_amount = 0.001
+        self.up_amount2 = 0.42
+        self.knock = False          #whether in knock down mode
 
+
+        #make it die fast
+        self.poke_out = 10
+        # self.move_up2 = 10.0
         
     def act(self, obs, obj_poses):
         print(self.state)
@@ -111,11 +123,12 @@ class Agent:
         #self.state = self.state + 1 if self.state != State.ALIGN else self.RESET
         xmin,xmax = 0, 0.45
         ymin,ymax = -0.45, 0.4
-        zmin,zmax = 0.5,1.7
-
+        zmin,zmax = 0.77,1.7
+        # print (self.goal[:3])
         if self.goal[0] < xmin or self.goal[0] > xmax or self.goal[1] < ymin or self.goal[1] > ymax or self.goal[2] < zmin or self.goal[2]> zmax:
-            print("OUT OF BOUNDS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!") 
-        return self.goal + self.gripper
+            print("OUT OF BOUNDS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!") 
+            self.knock = True 
+        return self.goal + self.gripper, self.knock
 
         # # print("Cuboid1\n",obj_poses['Cuboid1'])
         # # print ("obs gripper pose\n", obs.gripper_pose)
@@ -148,6 +161,7 @@ class Agent:
         # return delta_pos + delta_quat + gripper_pos
     def reset(self):
         self.gripper = [True]
+        self.knock = False
          
         while True:
             cuboidID = np.random.choice(range(5,11))    #dont take bottom level
@@ -180,13 +194,16 @@ class Agent:
         
         y90 = from_rotation_matrix(np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]]))
         
-        self.wptPokeOut[:3] = (T @ np.array([self.cuboidX/2+0.05, 0, 0, 0]).reshape((4,1)))[:3, 0] \
+        self.wptPokeOut[:3] = (T @ np.array([self.cuboidX/2+self.poke_out, 0, 0, 0]).reshape((4,1)))[:3, 0] \
                                + obj_poses[self.cuboid][:3]
         self.wptPokeOut[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
 
         self.wptPokeIn[:3] = (T @ np.array([self.cuboidX/2 - poke_amount, 0, 0, 0]).reshape((4,1)))[:3, 0] \
                                + obj_poses[self.cuboid][:3]
         self.wptPokeIn[3:7] = as_float_array(y90 * quaternion(quat[0], quat[1], quat[2], quat[3]))
+
+        if self.wptPokeOut[2] < 0.77:
+            self.knock = True 
 
         self.state = State.SEARCH_WPTPOKEOUT
         
@@ -220,7 +237,6 @@ class Agent:
     def home(self, obs):
         thresh = 0.05
         clearance = 0.3     #distance above top of block to home
-        self.grasp_amount = 0.018  #grasp more into the block when value is large
         # TODO: quaternion error
         if np.linalg.norm(obs.gripper_pose[:3] - np.array(self.home_goal[:3])) > thresh:
             # self.goal = self.home_goal
@@ -292,7 +308,7 @@ class Agent:
             # angle = np.pi-0.00001
             angle = np.pi
             # z180 = from_rotation_matrix(np.array([[np.cos(angle),-np.sin(angle), 0], [np.sin(angle), np.cos(angle), 0], [0, 0, 1]]))
-            dx,dy,_ = (T @ np.array([-self.cuboidX+self.grasp_amount, 0, 0, 0]).reshape((4,1)))[:3, 0]
+            dx,dy,_ = (T @ np.array([-self.cuboidX+self.place_amount, 0, 0, 0]).reshape((4,1)))[:3, 0]
 
             x = np.mean(xs) + dx
             y = np.mean(ys) + dy
@@ -301,7 +317,8 @@ class Agent:
 
             safety_factor = 0.005    #margin above surface when placing
             difference_factor = 0.8 #difference between height of blocks, accounting for noise
-
+            
+            #determine height of placing position
             if (maxHeight[0]-maxHeight[2])<self.cuboidZ * difference_factor:
                 count = 3
                 z = np.mean(maxHeight[:3]) + self.cuboidZ +safety_factor    #up a level
@@ -316,11 +333,10 @@ class Agent:
             self.state = State.MOVE_UP
 
     def move_up(self,obs,obj_poses):
-        up_amount = 0.001
         thresh = 0.05
-        if np.linalg.norm(obs.gripper_pose[2] - (self.placePose[2]+ up_amount)) > thresh:
+        if np.linalg.norm(obs.gripper_pose[2] - (self.placePose[2]+ self.up_amount)) > thresh:
             self.goal = self.wptPull
-            self.goal[2] = self.placePose[2] + up_amount
+            self.goal[2] = self.placePose[2] + self.up_amount
         else:
             self.state = State.SEARCH_PLACEMENT
 
@@ -336,10 +352,10 @@ class Agent:
     def place(self):
         self.gripper = [True]
         thresh = 0.05
-        self.rdx = 0.1  # the dist that the gripper move out 
+        
         rdz = 0.03
         # dx,dy,dz = (T @ np.array([-self.cuboidX+self.grasp_amount, 0, 0, 0]).reshape((4,1)))[:3, 0])
-        dx,dy,dz = self.transform(obs.gripper_pose, - self.rdx,0, rdz)
+        dx,dy,dz = self.transform(obs.gripper_pose, + self.align_out_amount,0, rdz)
         self.wptAlignout = self.placePose + self.wptGraspOut[3:7].tolist()
         self.wptAlignout[0] += dx
         self.wptAlignout[1] += dy
@@ -377,8 +393,8 @@ class Agent:
         if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh:
             self.goal = goal
         else:
-            # rdx = (self.cuboidX / 2) - (self.grasp_amount + self.rdx)
-            rdx = self.rdx + 0.01
+            # rdx = (self.cuboidX / 2) - (self.grasp_amount + self.align_out_amount)
+            rdx = self.align_out_amount + self.align_in_amount
             dx,dy,dz = self.transform(obs.gripper_pose, rdx,0, 0)
             self.wptAlignout = self.placePose + self.wptGraspOut[3:7].tolist()
             self.wptAlignout[0] += dx
@@ -406,16 +422,46 @@ class Agent:
             self.state = State.MOVE_UP2
 
     def move_up2(self,obs,obj_poses):
-        up_amount = 0.1
         thresh = 0.05
-        if np.linalg.norm(obs.gripper_pose[2] - (self.placePose[2]+up_amount)) > thresh:
-            self.goal = self.placePose + self.wptGraspOut[3:7].tolist()
-            self.goal[2] = self.placePose[2] + up_amount
+        goal = self.placePose + self.wptGraspOut[3:7].tolist()
+        goal[2] = self.placePose[2] + self.up_amount2
+        if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh:
+            self.goal = goal
         else:
             self.state = State.RESET
-           
 
-    # def moving_avg(self, )
+def euler_to_quat(roll, pitch, yaw):
+    qx = np.sin(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) - np.cos(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+    qy = np.cos(roll/2) * np.sin(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.cos(pitch/2) * np.sin(yaw/2)
+    qz = np.cos(roll/2) * np.cos(pitch/2) * np.sin(yaw/2) - np.sin(roll/2) * np.sin(pitch/2) * np.cos(yaw/2)
+    qw = np.cos(roll/2) * np.cos(pitch/2) * np.cos(yaw/2) + np.sin(roll/2) * np.sin(pitch/2) * np.sin(yaw/2)
+    return np.array([qx, qy, qz, qw])
+
+def move(x,y,z,roll,pitch,yaw):
+    action = [x,y,z,0,0,0,0,True]
+    action[3:7] = euler_to_quat(roll, pitch, yaw)
+    obs,_,_ = task.step(action)
+    return obs
+    
+
+
+def knock_down():
+    #knock down
+    roll,pitch,yaw = np.pi,0,np.pi
+    obs = move(0.3,-0.4,0.9,roll,pitch,yaw)
+    obs = move(0.1,0.3,0.75,roll,pitch,yaw)
+    obs = move(0.2,-0.2,0.75,roll,pitch,yaw)
+    
+    #clear
+    roll,pitch,yaw = np.pi,0,np.pi*1/2
+    obs = move(0.2,-0.3,0.75,roll,pitch,yaw)
+    obs = move(0.2,0.1,0.75,roll,pitch,yaw)  
+    obs = move(0.1,0.1,0.75,roll,pitch,yaw)
+    obs = move(0.1,-0.1,0.75,roll,pitch,yaw)
+    obs = move(0.1,-0.1,1.0,roll,pitch,yaw)
+    return obs
+    
+
 class NoisyObjectPoseSensor:
 
     def __init__(self, env):
@@ -423,6 +469,9 @@ class NoisyObjectPoseSensor:
 
         self._pos_scale = [0.005] * 3
         self._rot_scale = [0.01] * 3
+        #no noise
+        self._pos_scale = [0] *3
+        self._rot_scale = [0] * 3
 
     def get_poses(self):
         objs = self._env._scene._active_task.get_base().get_objects_in_tree(exclude_base=True, first_generation_only=False)
@@ -443,7 +492,64 @@ class NoisyObjectPoseSensor:
 
         return obj_poses
 
+def find_cuboid_2_grasp(obs, obj_poses, visited):
+    cuboidX = 0.2067
+    while True:
+        cuboidID = np.random.choice(range(0,15))    
+        if cuboidID not in visited:
+            visited.append(cuboidID)
+            break
+    if cuboidID == 13:
+        cuboid = 'target_cuboid'
+    elif cuboidID == 14:
+        cuboid = 'Cuboid'
+    else:
+        cuboid = 'Cuboid' + str(cuboidID)
+    print(cuboid)
+    task._task.register_graspable_objects([Shape(cuboid)])
 
+    quat = obj_poses[cuboid][3:7]
+    wptPick = [0,0,0,0,0,0,0]
+    wptPick[:3] = obj_poses[cuboid][:3]
+    
+    
+    orientation = R.from_quat(quat).as_euler('xyz', degrees = False)
+    # print("orientation\n",orientation*180/np.pi)
+    
+    orientation[0],orientation[1] = np.pi,0
+    new_quat = R.from_euler('xyz', [orientation], degrees = False).as_quat().squeeze()
+
+    wptPick[3:] = as_float_array(quaternion(new_quat[0], new_quat[1], new_quat[2], new_quat[3]))
+    action =  wptPick + [True]    
+    
+    move(wptPick[0],wptPick[1],wptPick[2]+0.1,orientation[0],orientation[1],orientation[2])
+    obs1 = move(wptPick[0],wptPick[1],wptPick[2],orientation[0],orientation[1],orientation[2])
+    # obs1,_,_ = task.step(action)
+    if obs1 == []:
+        if len(visited) == 15:
+            print('lalalalalalalalal')
+            env.shutdown()
+        return find_cuboid_2_grasp(obs,obj_poses, visited)
+    return obs1
+
+
+def grasp(obs):
+    action = obs.gripper_pose[:7].tolist() + [False]
+    obs,_,_ = task.step(action)
+    action[2] += 0.3
+    obs,_,_ = task.step(action)
+    return obs
+
+def moving_avg(obj_pose_sensor):
+    mov_avg = 50
+    obj_poses = obj_pose_sensor.get_poses()
+    for _ in range (mov_avg-1):
+        for key, item in obj_pose_sensor.get_poses().items():
+            obj_poses[key][:3] = [sum(i) for i in zip(obj_poses[key][:3], item[:3])] 
+            # print(obj_poses)
+    for key, item in obj_poses.items():
+        obj_poses[key][:3] = [i / mov_avg for i in item[:3]] 
+    return obj_poses
 
 
 if __name__ == "__main__":
@@ -477,22 +583,17 @@ if __name__ == "__main__":
     training_steps = 120
     iterations = 10
 
+    from rlbench.backend.conditions import JengaBuildTallerCondition
+    obj_poses = moving_avg(obj_pose_sensor)
+    task._task.register_success_conditions([JengaBuildTallerCondition(obj_poses)])
 
-    mov_avg = 50
+
     for it in range(iterations):
         # forward
         
         while True:
             # Getting noisy object poses
-            obj_poses = obj_pose_sensor.get_poses()
-
-            for _ in range (mov_avg-1):
-                for key, item in obj_pose_sensor.get_poses().items():
-                    obj_poses[key][:3] = [sum(i) for i in zip(obj_poses[key][:3], item[:3])] 
-                    # print(obj_poses)
-            for key, item in obj_poses.items():
-                obj_poses[key][:3] = [i / mov_avg for i in item[:3]] 
-            
+            obj_poses = moving_avg(obj_pose_sensor)
 
             # Getting various fields from obs
             current_joints = obs.joint_positions
@@ -503,17 +604,89 @@ if __name__ == "__main__":
 
             # Perform action and step simulation
             # action = agent.act(obs)
-
-            action = agent.act(obs, obj_poses)
-            obs, reward, terminate = task.step(action)
             
+            action,knock = agent.act(obs, obj_poses)
 
-            # if terminate:
-            #     break
-       
+            # break out action xyz is out of bounds
+            
+            
+            # break if path not found
+            obs, reward, terminate = task.step(action)
+            if knock == True:
+                break
+            if obs == [] and reward == [] and terminate == []:
+                break
+            
+        obs = knock_down()
         
-        # mess
-        
+        train_episodes=1
+        max_steps=200 
+        save_interval=10
+        gamma=0.9
+        batch_size=32
+        a_update_steps=10
+        c_update_steps=10
+        EPS = 1e-8
+
+        t0 = time.time()        
+        print('Training...  | Algorithm: {}  | Environment: {}'.format(alg.name, env.spec.id))
+        reward_buffer = []
+
+        for ep in range(1, train_episodes + 1):
+            #s = env.reset()
+            buffer_s, buffer_a, buffer_r = [], [], []
+            ep_rs_sum = 0
+            visited = []
+            s = env._extract_obs(obs)
+            for t in range(max_steps):  # in one episode
+                obj_poses = moving_avg(obj_pose_sensor)
+                obs = find_cuboid_2_grasp(obs, obj_poses, visited)
+                obs = grasp(obs)
+
+                a = alg.get_action(s)
+                s_, r, done, _ = env.step(a)
+                print("reward",r)
+                if s_ == 'path':    #redo if path not found
+                    continue
+                
+                buffer_s.append(s)
+                buffer_a.append(a)
+                buffer_r.append(r)
+                s = s_
+                ep_rs_sum += r
+
+                # update ppo
+                if (t + 1) % batch_size == 0 or t == max_steps - 1 or done:
+                    try:
+                        v_s_ = alg.get_v(s_)
+                    except:
+                        v_s_ = alg.get_v(s_[np.newaxis, :])   # for raw-pixel input
+                    discounted_r = []
+                    for r in buffer_r[::-1]:
+                        v_s_ = r + gamma * v_s_
+                        discounted_r.append(v_s_)
+                    discounted_r.reverse()
+                    bs = buffer_s if len(buffer_s[0].shape)>1 else np.vstack(buffer_s) # no vstack for raw-pixel input
+                    ba, br = np.vstack(buffer_a), np.array(discounted_r)[:, np.newaxis]
+                    buffer_s, buffer_a, buffer_r = [], [], []
+                    alg.update(bs, ba, br, a_update_steps, c_update_steps)
+                if done:
+                    print("episode done!")
+                    break
+
+            print(
+                'Episode: {}/{}  | Episode Reward: {:.4f}  | Running Time: {:.4f}'.format(
+                    ep, train_episodes, ep_rs_sum,
+                    time.time() - t0
+                )
+            )
+
+            reward_buffer.append(ep_rs_sum)
+            if ep and not ep % save_interval:
+                alg.save_ckpt(env_name=env.spec.id)
+                plot_save_log(reward_buffer, algorithm_name=alg.name, env_name=alg.spec.id)
+
+    
 
         # reset using RL
         # alg.learn(env=env, train_episodes=3, max_steps=training_steps, save_interval=40, mode='train', render=True, **learn_params)
@@ -533,6 +706,8 @@ if __name__ == "__main__":
             if terminate:
                 break
         """
+    alg.save_ckpt(env_name=env.spec.id)
+    plot_save_log(reward_buffer, algorithm_name=alg.name, env_name=env.spec.id)
 
     print('Done')
     env.close()
