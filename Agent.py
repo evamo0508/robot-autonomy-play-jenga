@@ -1,7 +1,9 @@
 import numpy as np
-from utils import State, transform, rotation_matrix
+import time
+from utils import State, transform, rotation_matrix, euler_to_quat
 from scipy.spatial.transform import Rotation as R
 from quaternion import from_rotation_matrix, quaternion, as_float_array
+from pyrep.objects.shape import Shape
 
 class Agent:
 
@@ -26,21 +28,26 @@ class Agent:
         self.place_amount = 0.06
         self.grasp_amount = 0.018  #grasp more into the block when value is large
         self.align_out_amount = -0.05  # the dist that the gripper move out before aligning. The more negative, the more it moves out
-        self.align_in_amount = 0.08     #increases this pushes in more
+        self.align_in_amount = 0.08    #increases this pushes in more
         self.up_amount = 0.001
         self.up_amount2 = 0.42
         self.knock = False          #whether in knock down mode
+        self.hor_quat = euler_to_quat(np.pi,0,-np.pi*1/4).tolist()
+        self.ver_quat = euler_to_quat(np.pi,0,np.pi*5/4).tolist()
+        self.build_count = 0
 
-
+        #test 
+        self.last_quat = None
+        self.last_pose = None
         #make it die fast
-        self.poke_out = 10
+        # self.poke_out = 10
         # self.move_up2 = 10.0
         
     def act(self, obs, obj_poses):
         print(self.state)
 
         if self.state == State.RESET:
-            self.reset()
+            self.reset(obj_poses)
         elif self.state == State.SEARCH_WPTPOKEOUT:
             self.search_wptPokeOut(obs, obj_poses)
         elif self.state == State.SEARCH_WPTPOKEIN:
@@ -50,7 +57,7 @@ class Agent:
         elif self.state == State.SEARCH_WPTGRASPOUT:
             self.search_wptGraspOut(obs, obj_poses)
         elif self.state == State.HOME:
-            self.home(obs)
+            self.home(obs,obj_poses)
         elif self.state == State.SEARCH_WPTGRASPIN:
             self.search_wptGraspIn(obs, obj_poses)
         elif self.state == State.GRASP:
@@ -62,27 +69,30 @@ class Agent:
         elif self.state == State.SEARCH_PLACEMENT:
             self.search_placement(obs, obj_poses)
         elif self.state == State.PLACE:
-            self.place()
+            self.place(obs)
         elif self.state == State.ALIGN_IN:
-            self.align_in()
+            self.align_in(obs)
         elif self.state == State.ALIGN_OUT:
-            self.align_out()
+            self.align_out(obs)
         elif self.state == State.MOVE_UP2:
             self.move_up2(obs, obj_poses)    
 
-        xmin,xmax = 0, 0.45
-        ymin,ymax = -0.45, 0.4
+        xmin,xmax = 0, 0.47
+        ymin,ymax = -0.45, 0.45
         zmin,zmax = 0.77,1.7
-        # print (self.goal[:3])
+        
+        print (self.goal[:3])
+
         if self.goal[0] < xmin or self.goal[0] > xmax or self.goal[1] < ymin or self.goal[1] > ymax or self.goal[2] < zmin or self.goal[2]> zmax:
             print("OUT OF BOUNDS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!") 
             self.knock = True 
         return self.goal + self.gripper, self.knock
 
-    def reset(self):
+    def reset(self,obj_poses):
         self.gripper = [True]
         self.knock = False
-         
+
+        # np.random.seed(12)
         while True:
             cuboidID = np.random.choice(range(5,11))    #dont take bottom level
             if cuboidID not in self.visited:
@@ -94,7 +104,10 @@ class Agent:
             self.cuboid = 'target_cuboid'
         else:
             self.cuboid = 'Cuboid' + str(cuboidID)
-
+        if self.cuboid == 'target_cuboid':
+            self.cuboid = 'Cuboid3'
+            self.visited.append(3)
+        
         # test
         # self.cuboid = 'target_cuboid'
         # self.cuboid = 'Cuboid5'
@@ -154,7 +167,7 @@ class Agent:
         else:
             self.state = State.HOME
 
-    def home(self, obs):
+    def home(self, obs,obj_poses):
         thresh = 0.05
         clearance = 0.3     #distance above top of block to home
         # TODO: quaternion error
@@ -235,20 +248,42 @@ class Agent:
             maxHeight = [pose[2] for (i, pose) in obj_poses.items()]
             maxHeight.sort(reverse=True)
 
-            safety_factor = 0.005    #margin above surface when placing
+            safety_factor = 0.04    #margin above surface when placing
             difference_factor = 0.8 #difference between height of blocks, accounting for noise
             
             #determine height of placing position
+            # if (maxHeight[0]-maxHeight[2])<self.cuboidZ * difference_factor:
+            #     count = 3
+            #     z = np.mean(maxHeight[:3]) + self.cuboidZ +safety_factor    #up a level
+            # elif (maxHeight[0]-maxHeight[1])<self.cuboidZ * difference_factor:
+            #     count = 2
+            #     z = np.mean(maxHeight[:2])+ safety_factor   #same level
+            # else:
+            #     count = 1
+            #     z = maxHeight[0]+ safety_factor #same level
+            # self.placePose = [x,y,z]
+
+
+            #===== test
             if (maxHeight[0]-maxHeight[2])<self.cuboidZ * difference_factor:
-                count = 3
                 z = np.mean(maxHeight[:3]) + self.cuboidZ +safety_factor    #up a level
+            
             elif (maxHeight[0]-maxHeight[1])<self.cuboidZ * difference_factor:
-                count = 2
+                T[:3, :3] = R.from_quat(self.last_quat).as_matrix()
+                dx,dy,_ = (T @ np.array([0, 2 * self.cuboidY, 0, 0]).reshape((4,1)))[:3, 0]
+                x = self.last_pose[0] + dx
+                y = self.last_pose[1] + dy
                 z = np.mean(maxHeight[:2])+ safety_factor   #same level
+            
             else:
-                count = 1
+                T[:3, :3] = R.from_quat(self.last_quat).as_matrix()
+                dx,dy,_ = (T @ np.array([0, -self.cuboidY - 0.001, 0, 0]).reshape((4,1)))[:3, 0]
+                x = self.last_pose[0] + dx
+                y = self.last_pose[1] + dy
                 z = maxHeight[0]+ safety_factor #same level
+
             self.placePose = [x,y,z]
+
 
             self.state = State.MOVE_UP
 
@@ -263,26 +298,47 @@ class Agent:
     def search_placement(self, obs, obj_poses):
         thresh = 0.05
         # TODO: quaternion error
-        goal = self.placePose + self.wptGraspOut[3:7].tolist()
-        if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh:
+        # goal = self.placePose + self.wptGraspOut[3:7].tolist()
+
+        #decide whether to place the block vertically or horizontally on the top
+        
+        if np.floor(self.build_count/3) % 2 == 0:
+            goal = self.placePose + self.ver_quat
+        else:
+            goal = self.placePose + self.hor_quat
+
+        self.last_quat = goal[3:] # store the last orientation #test
+        self.last_pose = goal[:3] # store the last location #test
+
+        self.build_count += 1
+        # if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh:
+        print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1111!!')
+        print(obs.gripper_pose)
+        print(goal)
+        print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1111!!')
+        if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh: # test
             self.goal = goal
         else:
             self.state = State.PLACE
 
-    def place(self):
+    def place(self,obs):
         self.gripper = [True]
         thresh = 0.05
         
-        rdz = 0.03
-        # dx,dy,dz = (T @ np.array([-self.cuboidX+self.grasp_amount, 0, 0, 0]).reshape((4,1)))[:3, 0])
-        dx,dy,dz = transform(obs.gripper_pose, + self.align_out_amount,0, rdz)
-        self.wptAlignout = self.placePose + self.wptGraspOut[3:7].tolist()
+        rdz = 0.08
+        T = np.zeros((4,4))
+        T[3, 3] = 1
+        T[:3, :3] = R.from_quat(obs.gripper_pose[3:]).as_matrix()
+        dx,dy,dz = (T @ np.array([self.align_out_amount, 0, 0, 0]).reshape((4,1)))[:3, 0]
+        # dx,dy,dz = transform(obs.gripper_pose, + self.align_out_amount,0, rdz)
+        # self.wptAlignout = self.placePose + self.wptGraspOut[3:7].tolist()
+        self.wptAlignout = self.goal # test
         self.wptAlignout[0] += dx
         self.wptAlignout[1] += dy
-        self.wptAlignout[2] += dz
+        self.wptAlignout[2] -= rdz
         self.state = State.ALIGN_OUT
    
-    def align_out(self):
+    def align_out(self,obs):
         thresh = 0.03
         # rdx = -self.grasp_amount-0.2
         # dx,dy,dz = (T @ np.array([-self.cuboidX+self.grasp_amount, 0, 0, 0]).reshape((4,1)))[:3, 0])
@@ -298,16 +354,17 @@ class Agent:
             # rdx = (self.cuboidX / 2) - (self.grasp_amount + self.align_out_amount)
             rdx = self.align_out_amount + self.align_in_amount
             dx,dy,dz = transform(obs.gripper_pose, rdx,0, 0)
-            self.wptAlignout = self.placePose + self.wptGraspOut[3:7].tolist()
+            # self.wptAlignout = self.placePose + self.wptGraspOut[3:7].tolist()
+            self.wptAlignout = self.goal # test
             self.wptAlignout[0] += dx
             self.wptAlignout[1] += dy
             self.wptAlignout[2] += dz
 
             self.state = State.ALIGN_IN
             
-    def align_in(self):
+    def align_in(self,obs):
         self.gripper = [False]
-        thresh = 0.05
+        thresh = 0.03
         goal = self.wptAlignout
         #adjust later push more
         # rdx = self.grasp_amount*2+0.2+self.cuboidX/2
@@ -325,8 +382,9 @@ class Agent:
 
     def move_up2(self,obs,obj_poses):
         thresh = 0.05
-        goal = self.placePose + self.wptGraspOut[3:7].tolist()
-        goal[2] = self.placePose[2] + self.up_amount2
+        # goal = self.placePose + self.wptGraspOut[3:7].tolist()
+        goal = self.goal
+        goal[2] = self.placePose[2] + self.up_amount2 - 0.1
         if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh:
             self.goal = goal
         else:
