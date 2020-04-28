@@ -97,7 +97,7 @@ def main():
             
             # break if path not found
             obs, reward, terminate = task.step(action)
-            if knock == True:
+            if knock == True or agent.build_count > 4:
                 break
             if obs == [] and reward == [] and terminate == []:
                 break
@@ -105,12 +105,12 @@ def main():
         obs = knock_down(task)
         
         train_episodes=2
-        max_steps=2 
+        max_steps=5 
         # save_interval=10
-        save_interval=1
+        save_interval=5
         gamma=0.9
         # batch_size=32
-        batch_size=2
+        batch_size=4
         a_update_steps=10
         c_update_steps=10
 

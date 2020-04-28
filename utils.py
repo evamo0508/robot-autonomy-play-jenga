@@ -44,9 +44,9 @@ class NoisyObjectPoseSensor:
 
         self._pos_scale = [0.005] * 3
         self._rot_scale = [0.01] * 3
-        #no noise
-        self._pos_scale = [0] *3
-        self._rot_scale = [0] * 3
+        # #no noise
+        # self._pos_scale = [0] *3
+        # self._rot_scale = [0] * 3
 
     def get_poses(self):
         objs = self._env._scene._active_task.get_base().get_objects_in_tree(exclude_base=True, first_generation_only=False)

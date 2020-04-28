@@ -34,7 +34,7 @@ class Agent:
         self.knock = False          #whether in knock down mode
         self.hor_quat = euler_to_quat(np.pi,0,-np.pi*1/4).tolist()
         self.ver_quat = euler_to_quat(np.pi,0,np.pi*5/4).tolist()
-        self.build_count = 0
+        self.build_count = 1
 
         #test 
         self.last_quat = None
@@ -81,7 +81,7 @@ class Agent:
         ymin,ymax = -0.45, 0.45
         zmin,zmax = 0.77,1.7
         
-        print (self.goal[:3])
+        # print (self.goal[:3])
 
         if self.goal[0] < xmin or self.goal[0] > xmax or self.goal[1] < ymin or self.goal[1] > ymax or self.goal[2] < zmin or self.goal[2]> zmax:
             print("OUT OF BOUNDS!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!") 
@@ -98,15 +98,20 @@ class Agent:
             if cuboidID not in self.visited:
                 self.visited.append(cuboidID)
                 break
-        
-
+            
+         
         if cuboidID == 10:
             self.cuboid = 'target_cuboid'
         else:
             self.cuboid = 'Cuboid' + str(cuboidID)
-        if self.cuboid == 'target_cuboid':
+            
+        if self.build_count == 1:
             self.cuboid = 'Cuboid3'
-            self.visited.append(3)
+        elif self.build_count == 2:
+            self.cuboid = 'Cuboid8'
+        elif self.build_count == 3:
+            self.cuboid = 'Cuboid9'
+        self.build_count +=1
         
         # test
         # self.cuboid = 'target_cuboid'
@@ -270,17 +275,18 @@ class Agent:
             
             elif (maxHeight[0]-maxHeight[1])<self.cuboidZ * difference_factor:
                 T[:3, :3] = R.from_quat(self.last_quat).as_matrix()
-                dx,dy,_ = (T @ np.array([0, 2 * self.cuboidY, 0, 0]).reshape((4,1)))[:3, 0]
+                dx,dy,_ = (T @ np.array([0, -2 * self.cuboidY, 0, 0]).reshape((4,1)))[:3, 0]
                 x = self.last_pose[0] + dx
                 y = self.last_pose[1] + dy
                 z = np.mean(maxHeight[:2])+ safety_factor   #same level
             
             else:
                 T[:3, :3] = R.from_quat(self.last_quat).as_matrix()
-                dx,dy,_ = (T @ np.array([0, -self.cuboidY - 0.001, 0, 0]).reshape((4,1)))[:3, 0]
+                dx,dy,_ = (T @ np.array([0, self.cuboidY - 0.001, 0, 0]).reshape((4,1)))[:3, 0]
                 x = self.last_pose[0] + dx
                 y = self.last_pose[1] + dy
                 z = maxHeight[0]+ safety_factor #same level
+
 
             self.placePose = [x,y,z]
 
@@ -302,20 +308,25 @@ class Agent:
 
         #decide whether to place the block vertically or horizontally on the top
         
-        if np.floor(self.build_count/3) % 2 == 0:
-            goal = self.placePose + self.ver_quat
-        else:
-            goal = self.placePose + self.hor_quat
+        # if np.floor(self.build_count/3) % 2 == 0:
+        #     goal = self.placePose + self.ver_quat
+        # else:
+        #     goal = self.placePose + self.hor_quat
+
+        # self.last_quat = goal[3:] # store the last orientation #test
+        # self.last_pose = goal[:3] # store the last location #test
+
+        # if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh:
+        # print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1111!!')
+        # print(obs.gripper_pose)
+        # print(goal)
+        # print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1111!!')
+
+
+        goal = self.placePose + self.ver_quat
 
         self.last_quat = goal[3:] # store the last orientation #test
         self.last_pose = goal[:3] # store the last location #test
-
-        self.build_count += 1
-        # if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh:
-        print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1111!!')
-        print(obs.gripper_pose)
-        print(goal)
-        print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1111!!')
         if np.linalg.norm(obs.gripper_pose[:3] - goal[:3]) > thresh: # test
             self.goal = goal
         else:
